@@ -49,7 +49,7 @@ static int file_tile_read(struct storage_backend * store, const char *xmlconfig,
     char path[PATH_MAX];
     int meta_offset, fd;
     unsigned int pos;
-    unsigned int header_len = sizeof(struct meta_layout) + METATILE*METATILE*sizeof(struct entry);
+    unsigned int header_len = sizeof(struct meta_layout) + METATILE*METATILE*sizeof(struct entry_item);
     struct meta_layout *m = (struct meta_layout *)malloc(header_len);
     size_t file_offset, tile_size;
 

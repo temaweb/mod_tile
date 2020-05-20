@@ -31,6 +31,8 @@
 #include "cache_expire.h"
 #include "parameterize_style.hpp"
 
+#include "measure.hpp"
+
 #ifdef HTCP_EXPIRE_CACHE
 #include <sys/socket.h>
 #include <netdb.h>
@@ -68,6 +70,8 @@ using namespace mapnik;
 #else
 #define RENDER_SIZE (512)
 #endif
+
+struct request_queue * render_request_queue;
 
 struct projectionconfig {
     double bound_x0;
@@ -142,6 +146,8 @@ struct projectionconfig * get_projection(const char * srs) {
 
     return prj;
 }
+
+using namespace std::chrono;
 
 static void load_fonts(const char *font_dir, int recurse)
 {
@@ -257,26 +263,34 @@ static enum protoCmd render(struct xmlmapconfig * map, int x, int y, int z, char
         if (map->parameterize_function) 
             map->parameterize_function(map_parameterized, options); 
         mapnik::agg_renderer<mapnik::image_32> ren(map_parameterized,buf,map->scale);
-        ren.apply();
+        
+        measure("Apply mapnik", [&] {
+            ren.apply();
+        });
+        
     } catch (std::exception const& ex) {
       syslog(LOG_ERR, "ERROR: failed to render TILE %s %d %d-%d %d-%d", map->xmlname, z, x, x+render_size_tx-1, y, y+render_size_ty-1);
       syslog(LOG_ERR, "   reason: %s", ex.what());
       return cmdNotDone;
     }
-
-    // Split the meta tile into an NxN grid of tiles
-    unsigned int xx, yy;
-    for (yy = 0; yy < render_size_ty; yy++) {
-        for (xx = 0; xx < render_size_tx; xx++) {
-#if MAPNIK_VERSION >= 300000
-            mapnik::image_view<mapnik::image<mapnik::rgba8_t>> vw1(xx * map->tilesize, yy * map->tilesize, map->tilesize, map->tilesize, buf);
-            struct mapnik::image_view_any vw(vw1);
-#else
-            mapnik::image_view<mapnik::image_data_32> vw(xx * map->tilesize, yy * map->tilesize, map->tilesize, map->tilesize, buf.data());
-#endif
-            tiles.set(xx, yy, save_to_string(vw, "png256"));
+    
+    measure("Split the meta tile into an NxN grid of tiles", [&]
+    {
+        unsigned int xx, yy;
+        for (yy = 0; yy < render_size_ty; yy++) {
+            for (xx = 0; xx < render_size_tx; xx++) {
+   
+            #if MAPNIK_VERSION >= 300000
+                mapnik::image_view<mapnik::image<mapnik::rgba8_t>> vw1(xx * map->tilesize, yy * map->tilesize, map->tilesize, map->tilesize, buf);
+                struct mapnik::image_view_any vw(vw1);
+            #else
+                mapnik::image_view<mapnik::image_data_32> vw(xx * map->tilesize, yy * map->tilesize, map->tilesize, map->tilesize, buf.data());
+            #endif
+                tiles.set(xx, yy, save_to_string(vw, "png256"));
+            }
         }
-    }
+    });
+    
     return cmdDone; // OK
 }
 #else //METATILE
@@ -321,7 +335,6 @@ static enum protoCmd render(Map &m, const char *tile_dir, char *xmlname, project
 }
 #endif //METATILE
 
-
 void render_init(const char *plugins_dir, const char* font_dir, int font_dir_recurse)
 {
   syslog(LOG_INFO, "Renderd is using mapnik version %i.%i.%i", ((MAPNIK_VERSION) / 100000), (((MAPNIK_VERSION) / 100) % 1000), ((MAPNIK_VERSION) % 100));
@@ -338,7 +351,7 @@ void *render_thread(void * arg)
     xmlconfigitem * parentxmlconfig = (xmlconfigitem *)arg;
     xmlmapconfig maps[XMLCONFIGS_MAX];
     int i,iMaxConfigs;
-    int render_time;
+    long render_time;
 
     for (iMaxConfigs = 0; iMaxConfigs < XMLCONFIGS_MAX; ++iMaxConfigs) {
         if (parentxmlconfig[iMaxConfigs].xmlname[0] == 0 || parentxmlconfig[iMaxConfigs].xmlfile[0] == 0) break;
@@ -414,10 +427,11 @@ void *render_thread(void * arg)
 
                             timeval tim;
                             gettimeofday(&tim, NULL);
-                            long t1=tim.tv_sec*1000+(tim.tv_usec/1000);
 
                             struct stat_info sinfo = maps[i].store->tile_stat(maps[i].store, req->xmlname, req->options, item->mx, item->my, req->z);
 
+                            auto begin = high_resolution_clock::now();
+                            
                             if(sinfo.size > 0)
                                 syslog(LOG_DEBUG, "DEBUG: START TILE %s %d %d-%d %d-%d, age %.2f days",
                                        req->xmlname, req->z, item->mx, item->mx+size-1, item->my, item->my+size-1,
@@ -425,23 +439,28 @@ void *render_thread(void * arg)
                             else
                                 syslog(LOG_DEBUG, "DEBUG: START TILE %s %d %d-%d %d-%d, new metatile",
                                        req->xmlname, req->z, item->mx, item->mx+size-1, item->my, item->my+size-1);
-
+                            
                             ret = render(&(maps[i]), item->mx, item->my, req->z, req->options, tiles);
+                            
+                            auto end = high_resolution_clock::now();
+                            auto elapsed = duration_cast<milliseconds>(end - begin);
 
-                            gettimeofday(&tim, NULL);
-                            long t2=tim.tv_sec*1000+(tim.tv_usec/1000);
-
+                            render_time = elapsed.count();
+                            
                             syslog(LOG_DEBUG, "DEBUG: DONE TILE %s %d %d-%d %d-%d in %.3lf seconds",
-                                    req->xmlname, req->z, item->mx, item->mx+size-1, item->my, item->my+size-1, (t2 - t1)/1000.0);
-
-                            render_time = t2 - t1;
+                                   req->xmlname, req->z, item->mx, item->mx+size-1, item->my, item->my+size-1, render_time/1000.0);
 
                             if (ret == cmdDone) {
-                                try {
-                                    tiles.save(maps[i].store);
-#ifdef HTCP_EXPIRE_CACHE
-                                    tiles.expire_tiles(maps[i].htcpsock,maps[i].host,maps[i].xmluri);
-#endif
+                                try
+                                {
+                                    measure("save tile", [&]
+                                    {
+                                        tiles.save(maps[i].store);
+                                        
+                                        #ifdef HTCP_EXPIRE_CACHE
+                                            tiles.expire_tiles(maps[i].htcpsock,maps[i].host,maps[i].xmluri);
+                                        #endif
+                                    });
 
                                 } catch (std::exception const& ex) {
                                     syslog(LOG_ERR, "Received exception when writing metatile to disk: %s", ex.what());
@@ -468,7 +487,7 @@ void *render_thread(void * arg)
                         syslog(LOG_ERR, "Received request for map layer '%s' which failed to load", req->xmlname);
                         ret = cmdNotDone;
                     }
-                    send_response(item, ret, render_time);
+                    send_response(item, ret, (int) render_time);
                     if ((ret != cmdDone) && (ret != cmdIgnore)) sleep(10); //Something went wrong with rendering, delay next processing to allow temporary issues to fix them selves
                     break;
                }

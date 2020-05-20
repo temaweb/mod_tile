@@ -62,7 +62,7 @@ void metaTile::save(struct storage_backend * store) {
     int ox, oy, limit;
     ssize_t offset;
     struct meta_layout m;
-    struct entry offsets[METATILE * METATILE];
+    struct entry_item offsets[METATILE * METATILE];
     char * metatilebuffer;
     char *tmp;
 

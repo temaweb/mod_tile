@@ -13,7 +13,7 @@ extern "C" {
 #define META_MAGIC "META"
 #define META_MAGIC_COMPRESSED "METZ"
     
-    struct entry {
+    struct entry_item {
         int offset;
         int size;
     };
@@ -22,7 +22,7 @@ extern "C" {
         char magic[4];
         int count; // METATILE ^ 2
         int x, y, z; // lowest x,y of this metatile, plus z
-        struct entry index[]; // count entries
+        struct entry_item index[]; // count entries
         // Followed by the tile data
         // The index offsets are measured from the start of the file
     };
@@ -45,7 +45,7 @@ class metaTile {
     std::string xmlconfig_;
     std::string options_;
     std::string tile[METATILE][METATILE];
-    static const int header_size = sizeof(struct meta_layout) + (sizeof(struct entry) * (METATILE * METATILE));
+    static const int header_size = sizeof(struct meta_layout) + (sizeof(struct entry_item) * (METATILE * METATILE));
     
 };
 
