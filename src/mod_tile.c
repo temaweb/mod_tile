@@ -752,8 +752,11 @@ static int delay_allowed(request_rec *r, enum tileState state) {
             return 0;
         }
     }
-
+#ifdef __APPLE__
+    hashkey = (ip.s6_addr[0] ^ ip.s6_addr[1] ^ ip.s6_addr[2] ^ ip.s6_addr[3]) % DELAY_HASHTABLE_SIZE;
+#else
     hashkey = (ip.s6_addr32[0] ^ ip.s6_addr32[1] ^ ip.s6_addr32[2] ^ ip.s6_addr32[3]) % DELAY_HASHTABLE_SIZE;
+#endif
     
     /* If a delaypool fillup is ongoing, just skip accounting to not block on a lock */
     if (delayp->locked) {
