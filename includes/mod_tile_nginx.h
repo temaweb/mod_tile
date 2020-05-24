@@ -9,9 +9,6 @@
 #ifndef mod_tile_nginx_h
 #define mod_tile_nginx_h
 
-static char * ngx_mod_tile_socket_address(ngx_conf_t * cf, void * post, void * data);
-static void * ngx_http_mod_tile_create_conf(ngx_conf_t * cf);
-
 typedef struct
 {
     /*
@@ -32,18 +29,25 @@ typedef struct
     /*
      * Set renderd socket port
      */
-    ngx_int_t renderd_socket_port;
+    ngx_uint_t renderd_socket_port;
     
     /*
      * Set timeout in seconds on mod_tile requests
      */
-    ngx_int_t request_timeout;
+    ngx_uint_t request_timeout;
     
     /*
      * Set timeout in seconds on missing mod_tile requests
      */
-    ngx_int_t request_timeout_priority;
+    ngx_uint_t request_timeout_priority;
     
-} tile_server_conf;
+} mod_tile_server_conf;
+
+static void * ngx_http_mod_tile_create_conf(ngx_conf_t * cf);
+static char * ngx_http_mod_tile_merge_conf(ngx_conf_t *cf, void *parent, void *child);
+
+static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf);
+static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t *r);
+static ngx_int_t ngx_http_mod_tile_process_request(ngx_http_request_t * r, mod_tile_server_conf * conf);
 
 #endif /* mod_tile_nginx_h */
