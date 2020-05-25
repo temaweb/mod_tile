@@ -50,4 +50,6 @@ static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf);
 static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t *r);
 static ngx_int_t ngx_http_mod_tile_process_request(ngx_http_request_t * r, mod_tile_server_conf * conf);
 
+static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsigned char * buffer, int length);
+
 #endif /* mod_tile_nginx_h */

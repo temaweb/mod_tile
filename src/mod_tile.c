@@ -1216,6 +1216,9 @@ static int tile_handler_serve(request_rec *r)
 
     err_msg[0] = 0;
 
+    
+    // MARK: tile read
+    
     len = rdata->store->tile_read(rdata->store, cmd->xmlname, cmd->options, cmd->x, cmd->y, cmd->z, buf, tile_max, &compressed, err_msg);
     ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r,
                   "Read tile of length %i from %s: %s", len, rdata->store->tile_storage_id(rdata->store, cmd->xmlname, cmd->options, cmd->x, cmd->y, cmd->z, id), err_msg);
@@ -1304,7 +1307,7 @@ static int tile_translate(request_rec *r)
 
     for (i = 0; i < scfg->configs->nelts; ++i) {
         tile_config_rec *tile_config = &tile_configs[i];
-
+    
         ap_log_rerror(APLOG_MARK, APLOG_DEBUG, 0, r, "tile_translate: testing baseuri(%s) name(%s) extension(%s)",
                 tile_config->baseuri, tile_config->xmlname, tile_config->fileExtension );
 
@@ -1362,14 +1365,15 @@ static int tile_translate(request_rec *r)
                 return HTTP_NOT_FOUND;
             }
 
-            strcpy(cmd->xmlname, tile_config->xmlname);
+            strcpy(cmd->xmlname,  tile_config->xmlname);
             strcpy(cmd->mimetype, tile_config->mimeType); 
-            strcpy(cmd->options,parameters);
+            strcpy(cmd->options,  parameters);
 
             // Store a copy for later
             rdata->cmd = cmd;
             rdata->layerNumber = i;
             rdata->store = get_storage_backend(r, i);
+            
             if (rdata->store == NULL) {
                 ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "tile_translate: failed to get valid storage backend");
                 if (!incRespCounter(HTTP_INTERNAL_SERVER_ERROR, r, cmd, rdata->layerNumber)) {
@@ -1642,15 +1646,18 @@ static void mod_tile_child_init(apr_pool_t *p, server_rec *s)
      }
 }
 
+// MARK: Register hooks
 static void register_hooks(__attribute__((unused)) apr_pool_t *p)
 {
     ap_hook_post_config(mod_tile_post_config, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_child_init(mod_tile_child_init, NULL, NULL, APR_HOOK_MIDDLE);
+    
     ap_hook_handler(tile_handler_serve, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_handler(tile_handler_dirty, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_handler(tile_handler_status, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_handler(tile_handler_json, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_handler(tile_handler_mod_stats, NULL, NULL, APR_HOOK_MIDDLE);
+    
     ap_hook_translate_name(tile_translate, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_map_to_storage(tile_storage_hook, NULL, NULL, APR_HOOK_FIRST);
 }

@@ -1,0 +1,34 @@
+ngx_addon_name=ngx_http_mod_tile_module
+
+NGX_HTTP_MOD_TILE_MODULE_DEPS="                       \
+        $ngx_addon_dir/includes/config.h              \
+        $ngx_addon_dir/includes/protocol.h            \
+        $ngx_addon_dir/includes/render_config.h       \
+        $ngx_addon_dir/includes/mod_tile.h            \
+        $ngx_addon_dir/includes/mod_tile_nginx.h      \
+        "
+
+NGX_HTTP_MOD_TILE_MODULE_SRCS="                       \
+        $ngx_addon_dir/src/mod_tile_nginx.c           \
+        $ngx_addon_dir/src/store.c                    \
+        $ngx_addon_dir/src/store_file.c               \
+        $ngx_addon_dir/src/store_memcached.c          \
+        $ngx_addon_dir/src/store_null.c               \
+        $ngx_addon_dir/src/store_rados.c              \
+        $ngx_addon_dir/src/store_ro_composite.c       \
+        $ngx_addon_dir/src/store_ro_http_proxy.c      \
+        $ngx_addon_dir/src/store_file_utils.c         \
+        $ngx_addon_dir/src/sys_utils.c                \
+        "
+
+ngx_module_type=HTTP
+ngx_module_name=$ngx_addon_name
+
+ngx_module_deps="$NGX_HTTP_MOD_TILE_MODULE_DEPS"
+ngx_module_srcs="$NGX_HTTP_MOD_TILE_MODULE_SRCS"
+ngx_module_incs="$ngx_addon_dir/includes"
+ngx_module_libs=-lcurl
+
+. auto/module
+
+CFLAGS="$CFLAGS -Wno-error"
