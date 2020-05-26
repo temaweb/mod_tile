@@ -22,6 +22,11 @@ typedef struct
     ngx_str_t tile_dir;
     
     /*
+     * Set name of the xml config
+     */
+    ngx_str_t xml_config;
+    
+    /*
      * Set name of unix domain socket for connecting to rendering daemon
      */
     ngx_str_t renderd_socket_name;
@@ -48,8 +53,12 @@ static char * ngx_http_mod_tile_merge_conf(ngx_conf_t *cf, void *parent, void *c
 
 static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf);
 static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t *r);
-static ngx_int_t ngx_http_mod_tile_process_request(ngx_http_request_t * r, mod_tile_server_conf * conf);
 
 static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsigned char * buffer, int length);
+static ngx_int_t ngx_http_mod_tile_process_request(ngx_http_request_t * request, mod_tile_server_conf * conf, struct protocol * cmd);
+
+static int socket_init(mod_tile_server_conf * conf, ngx_log_t * log);
+static int unix_socket_init(mod_tile_server_conf * conf, ngx_log_t * log);
+static int tcp_socket_init(mod_tile_server_conf * conf, ngx_log_t * log);
 
 #endif /* mod_tile_nginx_h */

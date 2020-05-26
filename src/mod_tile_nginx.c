@@ -36,6 +36,16 @@ static ngx_command_t ngx_mod_tile_commands[] =
         NULL
     },
     
+    // Xml name
+    {
+        ngx_string("mod_tile_xml_config"),
+        NGX_HTTP_LOC_CONF|NGX_CONF_TAKE1,
+        ngx_conf_set_str_slot,
+        NGX_HTTP_LOC_CONF_OFFSET,
+        offsetof(mod_tile_server_conf, xml_config),
+        NULL
+    },
+    
     // Unix domain socket where we connect to the rendering daemon
     {
         ngx_string("mod_tile_renderd_socket_name"),
@@ -167,6 +177,12 @@ static char * ngx_http_mod_tile_merge_conf(ngx_conf_t * cf, void * parent, void 
     );
     
     ngx_conf_merge_str_value  (
+        conf -> xml_config,
+        prev -> xml_config,
+        XMLCONFIG_DEFAULT
+    );
+    
+    ngx_conf_merge_str_value  (
         conf -> renderd_socket_name,
         prev -> renderd_socket_name,
         RENDER_SOCKET
@@ -218,7 +234,7 @@ static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf)
 
 
 /*
- *
+ * Check tile from cache otherwise send command to renderd
  */
 static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
 {
@@ -286,10 +302,11 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
     }
     
     err_msg[0] = 0;
-
+    const char * xmlconfig = (const char *) conf -> xml_config.data;
+    
     int lenght = store -> tile_read (
         store,
-        "default",       // XML
+        xmlconfig,
         cmd -> options,
         cmd -> x,
         cmd -> y,
@@ -310,13 +327,289 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
             
             return NGX_HTTP_NOT_IMPLEMENTED;
         }
-        
-        return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);
+
+        return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);;
     }
    
-    return ngx_http_mod_tile_process_request(request, conf);
+    return ngx_http_mod_tile_process_request(request, conf, cmd);
 }
 
+
+/*
+ * Initialize connection and send commad to renderd
+ */
+static ngx_int_t ngx_http_mod_tile_process_request(
+    ngx_http_request_t * request, mod_tile_server_conf * conf, struct protocol * cmd)
+{
+    ngx_log_t * log = request -> connection -> log;
+    ssize_t ret;
+    
+    if (cmd -> ver != 2)
+    {
+        ngx_log_error(NGX_LOG_ERR,
+            log, 0, "Protocol does not supported");
+        
+        return NGX_HTTP_NOT_IMPLEMENTED;
+
+    }
+    
+    int descriptor = socket_init(conf, log);
+    if (descriptor == FD_INVALID)
+    {
+        ngx_log_error(NGX_LOG_ERR,
+            log, 0, "Failed to connect to renderer");
+        
+        return NGX_HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    strcpy(cmd -> xmlname, (const char *) conf -> xml_config.data);
+    cmd -> cmd = cmdRender;
+    
+    int retry = 1;
+    
+    do
+    {
+        ret = send(descriptor, cmd, sizeof(struct protocol_v2), 0);
+        if (ret == sizeof(struct protocol_v2))
+            break;
+        
+        if (errno != EPIPE)
+        {
+            ngx_log_error(NGX_LOG_ERR,
+                log, 0, "request_tile: Failed to send request to renderer: %s", strerror(errno));
+          
+            close(descriptor);
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+        
+        close(descriptor);
+        
+        ngx_log_error(NGX_LOG_INFO,
+            log, 0, "request_tile: Reconnecting to rendering socket after failed request due to sigpipe");
+        
+        descriptor = socket_init(conf, log);
+        if (descriptor == FD_INVALID) {
+            return NGX_HTTP_INTERNAL_SERVER_ERROR;
+        }
+    }
+    while(retry--);
+    
+    struct protocol_v2 resp;
+    struct timeval tv = { conf -> request_timeout, 0 };
+    fd_set rx;
+    
+    while (1)
+    {
+        FD_ZERO(&rx);
+        FD_SET(descriptor, &rx);
+        
+        if (select(descriptor + 1, &rx, NULL, NULL, &tv))
+        {
+            ngx_memzero(&resp, sizeof(struct protocol_v2));
+            ret = recv(descriptor, &resp, sizeof(struct protocol_v2), 0);
+            if (ret != sizeof(struct protocol_v2))
+            {
+                close(descriptor);
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+            
+            if (resp.ver == 3) {
+                ret += recv(descriptor, ((void*)&resp) + sizeof(struct protocol_v2), sizeof(struct protocol) - sizeof(struct protocol_v2), 0);
+            }
+            
+            if (cmd -> x == resp.x &&
+                cmd -> y == resp.y &&
+                cmd -> z == resp.z &&
+                !strcmp(cmd->xmlname, resp.xmlname))
+            {
+                close(descriptor);
+                
+                if (resp.cmd == cmdDone)
+                    return ngx_http_mod_tile_handler(request);
+                
+                return NGX_HTTP_INTERNAL_SERVER_ERROR;
+            }
+            else
+            {
+                ngx_log_error(NGX_LOG_INFO,
+                    log, 0, "Response does not match request");
+            }
+        }
+        else
+        {
+            close(descriptor);
+            
+            ngx_log_error(NGX_LOG_INFO,
+                log, 0, "Socket not ready (timeout %d s)", conf -> request_timeout);
+            
+            return NGX_HTTP_GATEWAY_TIME_OUT;
+        }
+    }
+}
+
+
+/*
+ * Intialize socket
+ */
+static int socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
+{
+    if (conf -> renderd_socket_port > 0)
+    {
+        // TCP/IP
+        return tcp_socket_init(conf, log);
+    }
+    else
+    {
+        // UNIX Socket
+        return unix_socket_init(conf, log);
+    }
+}
+
+
+/*
+* Intialize UNIX socket
+*/
+static int unix_socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
+{
+    struct sockaddr_un address;
+
+    ngx_log_error(NGX_LOG_DEBUG_HTTP, log, 0,
+        "Connecting to renderd on Unix socket %s",
+        conf -> renderd_socket_name);
+
+    int descriptor = socket(PF_UNIX, SOCK_STREAM, 0);
+    if (descriptor < 0)
+    {
+        ngx_log_error(NGX_LOG_ERR, log, 0, "failed to create unix socket");
+        return FD_INVALID;
+    }
+
+    bzero(&address, sizeof(address));
+    address.sun_family = AF_UNIX;
+
+    strncpy (
+        address.sun_path,
+        (const char *) conf -> renderd_socket_name.data,
+        sizeof(address.sun_path) - sizeof(char)
+    );
+
+    int status = connect(descriptor, (struct sockaddr *) &address, sizeof(address));
+    if (status < 0)
+    {
+       ngx_log_error(NGX_LOG_ERR, log, 0,
+             "socket connect failed for: %s with reason: %s",
+             conf->renderd_socket_name,
+             strerror(errno));
+       
+       close(descriptor);
+       return FD_INVALID;
+    }
+
+    return descriptor;
+}
+
+
+/*
+* Intialize TCP/IP socket (IPv4, IPv6)
+*/
+static int tcp_socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
+{
+    ngx_log_error(NGX_LOG_INFO, log, 0,
+      "Connecting to renderd on %s:%i via TCP",
+      conf -> renderd_socket_name,
+      conf -> renderd_socket_port);
+    
+    struct addrinfo hints;
+    struct addrinfo * result;
+    
+    bzero(&hints, sizeof(struct addrinfo));
+    
+    hints.ai_family    = AF_UNSPEC;    /* Allow IPv4 or IPv6 */
+    hints.ai_socktype  = SOCK_STREAM;  /* TCP socket */
+    hints.ai_flags     = 0;
+    hints.ai_protocol  = 0;            /* Any protocol */
+    hints.ai_canonname = NULL;
+    hints.ai_addr      = NULL;
+    hints.ai_next      = NULL;
+    
+    char portnum[16];
+    sprintf(portnum, "%i", (int) conf -> renderd_socket_port);
+    
+    int status = getaddrinfo((const char *) conf -> renderd_socket_name.data, portnum, &hints, &result);
+    if (status != 0)
+    {
+        ngx_log_error(NGX_LOG_ERR, log, 0,
+            "failed to resolve hostname of rendering daemon %s", gai_strerror(status));
+        
+        return FD_INVALID;
+    }
+    
+    char ipstring[INET6_ADDRSTRLEN];
+    int descriptor;
+    
+    for (struct addrinfo * rp = result; rp != NULL; rp = rp -> ai_next)
+    {
+        switch(rp -> ai_family)
+        {
+            case AF_INET:
+                inet_ntop(AF_INET,
+                      &(((struct sockaddr_in *) rp -> ai_addr) -> sin_addr),
+                      ipstring, rp -> ai_addrlen);
+            break;
+                
+            case AF_INET6:
+                inet_ntop(AF_INET6,
+                      &(((struct sockaddr_in6 *)rp -> ai_addr) -> sin6_addr),
+                      ipstring, rp -> ai_addrlen);
+            break;
+            
+            default:
+                snprintf(ipstring, sizeof(ipstring), "address family %d", rp -> ai_family);
+            break;
+        }
+        
+        ngx_log_error(NGX_LOG_INFO, log, 0,
+            "Connecting TCP socket to rendering daemon at %s", ipstring);
+        
+        descriptor = socket(
+            rp -> ai_family,
+            rp -> ai_socktype,
+            rp -> ai_protocol
+        );
+        
+        if (descriptor < 0) {
+            continue;
+        }
+        
+        int con_status = connect(descriptor, rp -> ai_addr, rp -> ai_addrlen);
+        if (con_status != 0) {
+            ngx_log_error(NGX_LOG_WARN, log, 0,
+                "failed to connect to rendering daemon (%s), trying next ip", ipstring);
+            
+            close(descriptor);
+            continue;
+        }
+        
+        freeaddrinfo(result);
+        
+        if (descriptor < 0)
+        {
+            ngx_log_error(NGX_LOG_WARN, log, 0,
+                "failed to create tcp socket");
+            
+            return FD_INVALID;
+        }
+        
+        return descriptor;
+    }
+    
+    return FD_INVALID;
+}
+
+
+/*
+ * Send file
+ */
 static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsigned char * file, int length)
 {
     request -> headers_out.status = NGX_HTTP_OK;
@@ -340,15 +633,6 @@ static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsig
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
     
-    buffer -> file = ngx_pcalloc(request -> pool, sizeof(ngx_file_t));
-    
-    buffer -> file_pos  = 0;
-    buffer -> file_last = length;
-    buffer -> start = file;
-    buffer -> end   = file + length;
-    
-    buffer -> file -> name = (ngx_str_t)  ngx_string("image.png");
-    
     buffer -> pos  = file;
     buffer -> last = file + length;
     
@@ -358,43 +642,6 @@ static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsig
     buffer -> memory = 1;
     
     out.buf  = buffer;
-    out.next = NULL;
-
-    return ngx_http_output_filter(request, &out);
-}
-
-static ngx_int_t ngx_http_mod_tile_process_request(ngx_http_request_t * request, mod_tile_server_conf * conf)
-{
-    ngx_int_t rc;
-    ngx_buf_t * b;
-    ngx_chain_t out;
-
-    /* send header */
-
-    request -> headers_out.status = NGX_HTTP_OK;
-    request -> headers_out.content_length_n = request -> uri.len;
-    
-
-    rc = ngx_http_send_header(request);
-
-    if (rc == NGX_ERROR || rc > NGX_OK || request -> header_only) {
-        return rc;
-    }
-
-    b = ngx_calloc_buf(request->pool);
-    if (b == NULL) {
-        return NGX_ERROR;
-    }
-
-    b -> last_buf = (request == request -> main) ? 1: 0;
-    b -> last_in_chain = 1;
-
-    b -> memory = 1;
-
-    b -> pos = request -> uri.data;
-    b -> last = b -> pos + request->uri.len;
-
-    out.buf = b;
     out.next = NULL;
 
     return ngx_http_output_filter(request, &out);
