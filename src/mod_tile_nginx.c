@@ -319,13 +319,24 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
     
     if (lenght > 0)
     {
-        // TODO: Accept-Encoding
         if (compressed)
         {
-            ngx_log_error(NGX_LOG_ERR,
-                request -> connection -> log, 0, "Gzip support not implemented");
+            const char * gzip = "gzip";
             
-            return NGX_HTTP_NOT_IMPLEMENTED;
+            ngx_table_elt_t * accept_encoding = request -> headers_in.accept_encoding;
+            if (ngx_strcmp(accept_encoding, gzip))
+            {
+                request -> headers_out.content_encoding -> value = (ngx_str_t) ngx_string(gzip);
+            }
+            else
+            {
+                ngx_log_error(NGX_LOG_ERR,
+                    request -> connection -> log, 0,
+                    "Tile data is compressed, but user agent doesn't support" \
+                    "Content-Encoding and we don't know how to decompress it server side");
+                
+                return NGX_HTTP_CLIENT_ERROR;
+            }
         }
 
         return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);;
@@ -413,8 +424,12 @@ static ngx_int_t ngx_http_mod_tile_process_request(
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
             }
             
-            if (resp.ver == 3) {
-                ret += recv(descriptor, ((void*)&resp) + sizeof(struct protocol_v2), sizeof(struct protocol) - sizeof(struct protocol_v2), 0);
+            if (resp.ver == 3)
+            {
+                ret += recv(descriptor,
+                    ((void*)&resp) + sizeof(struct protocol_v2),
+                    sizeof(struct protocol) - sizeof(struct protocol_v2), 0
+                );
             }
             
             if (cmd -> x == resp.x &&
@@ -614,10 +629,10 @@ static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsig
 {
     request -> headers_out.status = NGX_HTTP_OK;
     request -> headers_out.content_length_n = length;
-    request -> headers_out.content_type_lowcase = (unsigned char *) "image/png";
+    request -> headers_out.content_type = (ngx_str_t) ngx_string("image/png");
     
     ngx_int_t result = ngx_http_send_header(request);
-
+    
     if (result == NGX_ERROR || result > NGX_OK || request -> header_only) {
         return result;
     }
