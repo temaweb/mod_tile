@@ -65,7 +65,7 @@ static int file_tile_read(struct storage_backend * store, const char *xmlconfig,
     pos = 0;
     while (pos < header_len) {
         size_t len = header_len - pos;
-        int got = read(fd, ((unsigned char *) m) + pos, len);
+        int got = (int) read(fd, ((unsigned char *) m) + pos, len);
         if (got < 0) {
             snprintf(log_msg,PATH_MAX - 1, "Failed to read complete header for metatile %s Reason: %s\n", path, strerror(errno));
             close(fd);
@@ -123,7 +123,7 @@ static int file_tile_read(struct storage_backend * store, const char *xmlconfig,
     pos = 0;
     while (pos < tile_size) {
         size_t len = tile_size - pos;
-        int got = read(fd, buf + pos, len);
+        int got = (int) read(fd, buf + pos, len);
         if (got < 0) {
             snprintf(log_msg, PATH_MAX - 1, "Failed to read data from file %s. Reason: %s\n", path, strerror(errno));
             close(fd);
@@ -185,7 +185,8 @@ static int file_metatile_write(struct storage_backend * store, const char *xmlco
     log_message(STORE_LOGLVL_DEBUG, "Creating and writing a metatile to %s\n", meta_path);
 
     tmp = malloc(sizeof(char) * strlen(meta_path) + 24);
-    snprintf(tmp, strlen(meta_path) + 24, "%s.%lu", meta_path, pthread_self());
+    
+    snprintf(tmp, strlen(meta_path) + 24, "%s.%lu", meta_path, (unsigned long) pthread_self());
 
     if (mkdirp(tmp)) {
         free(tmp);
@@ -200,7 +201,7 @@ static int file_metatile_write(struct storage_backend * store, const char *xmlco
         return -1;
     }
     
-    res = write(fd, buf, sz);
+    res = (int) write(fd, buf, sz);
     if (res != sz) {
         log_message(STORE_LOGLVL_WARNING, "Error writing file %s: %s\n", meta_path, strerror(errno));
         close(fd);

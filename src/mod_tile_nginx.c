@@ -558,7 +558,7 @@ static int tcp_socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
         
         return FD_INVALID;
     }
-    
+     
     char ipstring[INET6_ADDRSTRLEN];
     int descriptor;
     

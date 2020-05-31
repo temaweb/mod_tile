@@ -139,7 +139,7 @@ static int ro_http_proxy_tile_read(struct storage_backend * store, const char *x
             return -1;
         }
         memcpy(buf, ctx->cache.tile, ctx->cache.st_stat.size);
-        return ctx->cache.st_stat.size;
+        return (int) ctx->cache.st_stat.size;
     } else {
         log_message(STORE_LOGLVL_ERR, "ro_http_proxy_tile_read: Fetching didn't work");
         return -1;
