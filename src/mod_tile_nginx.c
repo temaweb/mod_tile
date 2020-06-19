@@ -349,10 +349,7 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
         }
 
         cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-        
-        ngx_log_error(NGX_LOG_INFO,
-            request -> connection -> log, 0,
-            "Read time from cache in %.3lf seconds", cpu_time_used);
+        log_message(STORE_LOGLVL_DEBUG, "Read time from cache in %.3lf seconds", cpu_time_used);
         
         return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);
     }
