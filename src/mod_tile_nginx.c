@@ -8,6 +8,8 @@
 
 #include "render_config.h"
 
+#include <time.h>
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
@@ -304,6 +306,11 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
     err_msg[0] = 0;
     const char * xmlconfig = (const char *) conf -> xml_config.data;
     
+    clock_t start, end;
+    double cpu_time_used;
+    
+    start = clock();
+    
     int lenght = store -> tile_read (
         store,
         xmlconfig,
@@ -316,6 +323,8 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
         &compressed,    // out
         err_msg         // out
     );
+    
+    end = clock();
     
     if (lenght > 0)
     {
@@ -339,7 +348,13 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
             }
         }
 
-        return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);;
+        cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+        
+        ngx_log_error(NGX_LOG_INFO,
+            request -> connection -> log, 0,
+            "Read time from cache in %.3lf seconds", cpu_time_used);
+        
+        return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);
     }
    
     return ngx_http_mod_tile_process_request(request, conf, cmd);
