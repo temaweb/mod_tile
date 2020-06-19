@@ -364,6 +364,12 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
 static ngx_int_t ngx_http_mod_tile_process_request(
     ngx_http_request_t * request, mod_tile_server_conf * conf, struct protocol * cmd)
 {
+    
+    clock_t start, end;
+    double cpu_time_used;
+    
+    start = clock();
+    
     ngx_log_t * log = request -> connection -> log;
     ssize_t ret;
     
@@ -452,7 +458,13 @@ static ngx_int_t ngx_http_mod_tile_process_request(
                 close(descriptor);
                 
                 if (resp.cmd == cmdDone)
+                {
+                    end = clock();
+                    cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+                    log_message(STORE_LOGLVL_DEBUG, "Request time in %.3lf seconds", cpu_time_used);
+                    
                     return ngx_http_mod_tile_handler(request);
+                }
                 
                 return NGX_HTTP_INTERNAL_SERVER_ERROR;
             }
