@@ -683,5 +683,8 @@ static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsig
     out.buf  = buffer;
     out.next = NULL;
 
-    return ngx_http_output_filter(request, &out);
+    ngx_int_t f = ngx_http_output_filter(request, &out);
+    ngx_http_finalize_request(request, f);
+    
+    return NGX_OK;
 }
