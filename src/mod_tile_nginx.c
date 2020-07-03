@@ -26,6 +26,16 @@ typedef ngx_array_t apr_array_header_t;
 
 #define URI_PATTERN "/%99[^/]/%d/%d/%d.%255[a-z]"
 
+double time_spent(struct timeval start, struct timeval end)
+{
+    double time_taken; 
+  
+    time_taken = (end.tv_sec - start.tv_sec) * 1e6; 
+    time_taken = (time_taken + (end.tv_usec - start.tv_usec)) * 1e-6; 
+
+    return time_taken;
+}
+
 static ngx_command_t ngx_mod_tile_commands[] =
 {
     // Specify the default base storage path for where tiles live.
@@ -216,7 +226,7 @@ static char * ngx_http_mod_tile_merge_conf(ngx_conf_t * cf, void * parent, void 
  * Initialize module ...
  */
 static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf)
- {
+{
     ngx_http_core_main_conf_t * core_conf;
     ngx_http_phase_t * preaccess_phase;
     ngx_http_handler_pt * handler;
@@ -240,6 +250,11 @@ static ngx_int_t ngx_http_mod_tile_init(ngx_conf_t * cf)
  */
 static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
 {
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    
+    ngx_log_t * log = request -> connection -> log;
+
     mod_tile_server_conf * conf;
     tile_request_data * rdata;
     struct protocol * cmd;
@@ -305,12 +320,7 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
     
     err_msg[0] = 0;
     const char * xmlconfig = (const char *) conf -> xml_config.data;
-    
-    clock_t start, end;
-    double cpu_time_used;
-    
-    start = clock();
-    
+        
     int lenght = store -> tile_read (
         store,
         xmlconfig,
@@ -323,9 +333,9 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
         &compressed,    // out
         err_msg         // out
     );
-    
-    end = clock();
-    
+
+    gettimeofday(&end,   NULL); 
+
     if (lenght > 0)
     {
         if (compressed)
@@ -348,12 +358,17 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
             }
         }
 
-        cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-        log_message(STORE_LOGLVL_DEBUG, "Read time from cache in %.3lf seconds", cpu_time_used);
-        
+        log_message(STORE_LOGLVL_DEBUG,  
+            "Read time from cache in %.3lf seconds", time_spent(start, end));
+
         return ngx_http_mod_tile_send_file(request, (unsigned char *) buffer, lenght);
     }
    
+    gettimeofday(&end,   NULL);
+    
+    log_message(STORE_LOGLVL_DEBUG,  
+        "Check time from cache in %.3lf seconds", time_spent(start, end));
+
     return ngx_http_mod_tile_process_request(request, conf, cmd);
 }
 
@@ -363,12 +378,9 @@ static ngx_int_t ngx_http_mod_tile_handler(ngx_http_request_t * request)
  */
 static ngx_int_t ngx_http_mod_tile_process_request(
     ngx_http_request_t * request, mod_tile_server_conf * conf, struct protocol * cmd)
-{
-    
-    clock_t start, end;
-    double cpu_time_used;
-    
-    start = clock();
+{    
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
     
     ngx_log_t * log = request -> connection -> log;
     ssize_t ret;
@@ -458,11 +470,10 @@ static ngx_int_t ngx_http_mod_tile_process_request(
                 close(descriptor);
                 
                 if (resp.cmd == cmdDone)
-                {
-                    end = clock();
-                    cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-                    log_message(STORE_LOGLVL_DEBUG, "Request time in %.3lf seconds", cpu_time_used);
-                    
+                {                    
+                    gettimeofday(&end,   NULL);                       
+                    log_message(STORE_LOGLVL_DEBUG, "Request time in %.3lf seconds", time_spent(start, end));
+
                     return ngx_http_mod_tile_handler(request);
                 }
                 
@@ -553,9 +564,9 @@ static int unix_socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
 */
 static int tcp_socket_init(mod_tile_server_conf * conf, ngx_log_t * log)
 {
-    ngx_log_error(NGX_LOG_INFO, log, 0,
-      "Connecting to renderd on %s:%i via TCP",
-      conf -> renderd_socket_name,
+    ngx_log_error(NGX_LOG_INFO, log, 0, 
+    "Connecting to renderd on %s:%i via TCP",
+      conf -> renderd_socket_name.data,
       conf -> renderd_socket_port);
     
     struct addrinfo hints;
@@ -683,8 +694,6 @@ static ngx_int_t ngx_http_mod_tile_send_file(ngx_http_request_t * request, unsig
     out.buf  = buffer;
     out.next = NULL;
 
-    ngx_int_t f = ngx_http_output_filter(request, &out);
-    ngx_http_finalize_request(request, f);
-    
+    ngx_http_output_filter(request, &out);
     return NGX_OK;
 }
